@@ -1,0 +1,213 @@
+
+# coding: utf-8
+
+# In[230]:
+
+
+# Load kymograph.
+from skimage.io import imread, imshow
+from skimage.color import rgb2gray
+from skimage.util import img_as_float
+raw_im = imread('/Users/johnny/Desktop/20190627_TIRF_MF/Expt1/Expt1_Pos1/Tm1A_Channel_Kymograph0_cropped.tif')
+gray_im = img_as_float(rgb2gray(raw_im))
+
+
+# In[231]:
+
+
+# Enhance contrast.
+from skimage.exposure import equalize_adapthist
+enhanced_im = equalize_adapthist(gray_im, kernel_size = [250, 100])
+
+
+# In[232]:
+
+
+# Close.
+from skimage.morphology import closing, dilation, rectangle, disk, binary_closing
+closing_rectangle = rectangle(3, 1, dtype = float)
+closed_im = closing(enhanced_im, selem = closing_rectangle)
+
+
+# In[233]:
+
+
+# Blurr and binarize.
+from skimage.filters import gaussian, threshold_isodata, threshold_otsu
+from numpy import max
+gauss_im = gaussian(closed_im, sigma = 0.5)
+
+
+# In[235]:
+
+
+# Perform local thresholding.
+from skimage import data
+from skimage.morphology import disk, rectangle
+from skimage.filters import threshold_otsu, rank
+from skimage.util import img_as_ubyte
+
+import matplotlib
+import matplotlib.pyplot as plt
+
+matplotlib.rcParams['font.size'] = 10
+img = img_as_ubyte(gauss_im)
+
+radius = 9
+selem = disk(radius)
+#selem = rectangle(6,15)
+local_otsu = rank.otsu(img, selem)
+threshold_global_otsu = threshold_otsu(img)
+global_otsu = img >= threshold_global_otsu
+
+fig, ax = plt.subplots(2, 2, figsize=(8, 5), sharex=True, sharey=True,
+                       subplot_kw={'adjustable': 'box-forced'})
+ax0, ax1, ax2, ax3 = ax.ravel()
+plt.tight_layout()
+
+fig.colorbar(ax0.imshow(img, cmap=plt.cm.gray),
+             ax=ax0, orientation='horizontal')
+ax0.set_title('Original')
+ax0.axis('off')
+
+fig.colorbar(ax1.imshow(local_otsu, cmap=plt.cm.gray),
+             ax=ax1, orientation='horizontal')
+ax1.set_title('Local Otsu (radius=%d)' % radius)
+ax1.axis('off')
+
+ax2.imshow(img >= local_otsu, cmap=plt.cm.gray)
+ax2.set_title('Original >= Local Otsu' % threshold_global_otsu)
+ax2.axis('off')
+
+ax3.imshow(global_otsu, cmap=plt.cm.gray)
+ax3.set_title('Global Otsu (threshold = %d)' % threshold_global_otsu)
+ax3.axis('off')
+
+plt.show()
+
+
+# In[238]:
+
+
+# Clean up image and find boundaries.
+from scipy.ndimage.morphology import binary_fill_holes
+from skimage.segmentation import find_boundaries
+
+#filled_im = binary_fill_holes(global_otsu)
+filled_im = binary_fill_holes(img >= local_otsu)
+boundaries_im = find_boundaries(filled_im)
+
+
+# In[239]:
+
+
+# Display results.
+get_ipython().run_line_magic('matplotlib', 'inline')
+from matplotlib.pyplot import subplots
+from skimage.morphology import skeletonize, thin
+
+thin_im = thin(boundaries_im)
+skel_im = skeletonize(boundaries_im)
+figure_hand, axes_hand = subplots(nrows = 1, ncols = 5)
+figure_hand.set_figwidth(20)
+figure_hand.set_figheight(20)
+axes_hand[0].imshow(gray_im)
+axes_hand[1].imshow(gauss_im)
+axes_hand[2].imshow(filled_im)
+#axes_hand[2].imshow(img >= local_otsu)
+axes_hand[3].imshow(boundaries_im)
+axes_hand[4].imshow(skel_im)
+
+
+# In[249]:
+
+
+from skimage.measure import regionprops, label
+import sys
+
+label_im = label(thin_im)
+region_props_list = regionprops(label_im)
+row_col_mat = region_props_list[2].coords
+
+#t_row was multiplied by 4; the interval between images. Units: seconds
+#y_row was multiplied by 0.1589 to convert to um.
+t_row = row_col_mat[:, 0] * 4
+y_row = row_col_mat[:, 1] * 0.1589
+
+
+# In[250]:
+
+
+#Plot t_row, y_row to observe coordinates. Change region_props_list when necessary.
+fig2_hand, axes2_hand = subplots()
+fig2_hand.set_figwidth(10)
+fig2_hand.set_figheight(10)
+axes2_hand.plot(t_row, y_row, '.')
+axes2_hand.set_xlabel('Time (s)')
+axes2_hand.set_ylabel('Position ($\mu$m)')
+
+
+# In[242]:
+
+
+# Write to csv.
+import csv
+with open('Expt1_Pos1_Tm1A_Channel_Kymograph7_cropped.csv', 'w', newline='') as csvfile:
+    fieldnames = ['t', 'y']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    writer.writeheader()
+    for i in range(len(t_row)):
+        writer.writerow({'t': t_row[i], 'y': y_row[i]})
+
+
+# In[251]:
+
+
+# Split trace.
+from numpy import argmin
+idx_time_bind = argmin(t_row)
+y_time_bind = y_row[idx_time_bind]
+t_pos_row = t_row[y_row > y_time_bind]
+y_pos_row = y_row[y_row > y_time_bind]
+t_neg_row = t_row[y_row <= y_time_bind]
+y_neg_row = y_row[y_row <= y_time_bind]
+
+
+# In[252]:
+
+
+fig3_hand, axes3_hand = subplots()
+axes3_hand.plot(t_pos_row, y_pos_row)
+axes3_hand.plot(t_neg_row, y_neg_row)
+
+
+# In[245]:
+
+
+# Estimate speed.
+from numpy import gradient, mean, abs
+dy_pos_dt_row = gradient(y_pos_row) / gradient(t_pos_row)
+dy_neg_dt_row = gradient(y_neg_row) / gradient(t_neg_row)
+fig4_hand, axes4_hand = subplots()
+axes4_hand.plot(t_pos_row, dy_pos_dt_row)
+axes4_hand.plot(t_neg_row, dy_neg_dt_row)
+
+
+# In[ ]:
+
+
+from matplotlib.pyplot import hist
+from numpy import inf
+hist(dy_pos_dt_row[dy_pos_dt_row < inf], bins = 20)
+
+
+# In[ ]:
+
+
+dy_pos_dt_row[dy_pos_dt_row == inf] = 0.0
+dy_neg_dt_row[dy_neg_dt_row == inf] = 0.0
+mean_pos_speed = mean(dy_pos_dt_row[abs(dy_pos_dt_row) >= 0.02])
+mean_neg_speed = mean(dy_neg_dt_row[abs(dy_neg_dt_row) >= 0.02])
+print(mean_pos_speed)
+print(mean_neg_speed)
+
